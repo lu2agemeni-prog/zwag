@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { useApp } from "../lib/store";
 import { Gender } from "../types";
-import { SUPABASE_SQL_SETUP } from "../lib/supabase";
 import { 
   Shield, Users, Sparkles, Check, X, AlertTriangle, 
   Trash2, Award, ShieldCheck, Database, Copy, RefreshCw, CheckCircle2 
