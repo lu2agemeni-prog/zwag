@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { AppProvider, useApp } from "./lib/store";
+import { getAvatarUrl } from "./lib/avatarUtils";
 import { AuthFlow } from "./components/AuthFlow";
 import { Sidebar } from "./components/Sidebar";
 import { BottomBar } from "./components/BottomBar";
@@ -60,7 +61,10 @@ const AppContent: React.FC = () => {
   const ignoredProfiles = matchProfiles.filter(p => ignoredUserIds.includes(p.id));
 
   // 3. Who interested in me (In demo state: show 2 random opposite-gender profiles as "interested in you" for realistic testing)
-  const whoInterestedProfiles = matchProfiles.slice(1, 3);
+  const whoInterestedIds = interactions
+    .filter(i => i.toUserId === currentUser.id && i.type === "interest")
+    .map(i => i.fromUserId);
+  const whoInterestedProfiles = matchProfiles.filter(p => whoInterestedIds.includes(p.id));
 
   const handleUpdateProfileSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,7 +164,7 @@ const AppContent: React.FC = () => {
                 <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm text-center space-y-4">
                   <div className="relative w-24 h-24 mx-auto">
                     <img 
-                      src={currentUser.profileImage || `https://images.unsplash.com/photo-${currentUser.avatar === "male_1" ? "1534528741775-53994a69daeb" : currentUser.avatar === "female_1" ? "1494790108377-be9c29b29330" : "1507003211169-0a1dd7228f2d"}?auto=format&fit=crop&w=150&q=80`} 
+                      src={getAvatarUrl(currentUser.avatar, currentUser.profileImage)} 
                       alt="" 
                       className="w-24 h-24 rounded-full object-cover border-4 border-slate-100 shadow-md"
                       referrerPolicy="no-referrer"
@@ -319,7 +323,7 @@ const AppContent: React.FC = () => {
                       >
                         <div className="flex items-center gap-3">
                           <img 
-                            src={p.profileImage || `https://images.unsplash.com/photo-${p.avatar === "male_1" ? "1534528741775-53994a69daeb" : p.avatar === "female_1" ? "1494790108377-be9c29b29330" : "1507003211169-0a1dd7228f2d"}?auto=format&fit=crop&w=150&q=80`} 
+                            src={getAvatarUrl(p.avatar, p.profileImage)} 
                             alt="" 
                             className="w-12 h-12 rounded-full object-cover border border-slate-200"
                             referrerPolicy="no-referrer"
@@ -362,7 +366,7 @@ const AppContent: React.FC = () => {
                       >
                         <div className="flex items-center gap-3">
                           <img 
-                            src={p.profileImage || `https://images.unsplash.com/photo-${p.avatar === "male_1" ? "1534528741775-53994a69daeb" : p.avatar === "female_1" ? "1494790108377-be9c29b29330" : "1507003211169-0a1dd7228f2d"}?auto=format&fit=crop&w=150&q=80`} 
+                            src={getAvatarUrl(p.avatar, p.profileImage)} 
                             alt="" 
                             className="w-12 h-12 rounded-full object-cover border border-slate-200"
                             referrerPolicy="no-referrer"
@@ -411,7 +415,7 @@ const AppContent: React.FC = () => {
                       >
                         <div className="flex items-center gap-3">
                           <img 
-                            src={p.profileImage || `https://images.unsplash.com/photo-${p.avatar === "male_1" ? "1534528741775-53994a69daeb" : p.avatar === "female_1" ? "1494790108377-be9c29b29330" : "1507003211169-0a1dd7228f2d"}?auto=format&fit=crop&w=150&q=80`} 
+                            src={getAvatarUrl(p.avatar, p.profileImage)} 
                             alt="" 
                             className="w-12 h-12 rounded-full object-cover border border-slate-200"
                             referrerPolicy="no-referrer"
