@@ -1,0 +1,6 @@
+{
+  "name": "الزواج الإسلامي - مودة ورحمة",
+  "description": "تطبيق جاد وموثوق للتعارف بغرض الزواج الشرعي على الطريقة الإسلامية مع نظام تحقق صارم لضمان خصوصية وجدية المستخدمين.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
