@@ -1,3 +1,4 @@
+import { getAvatarUrl } from "../lib/avatarUtils";
 import React, { useState } from "react";
 import { useApp } from "../lib/store";
 import { Award, Heart, Sparkles, Send, CheckCircle2, User, ChevronLeft } from "lucide-react";
@@ -52,12 +53,12 @@ export const SuccessStories: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <div className="flex -space-x-2 space-x-reverse">
                     <img 
-                      src={`https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80`} 
+                      src={getAvatarUrl("male_4")} 
                       className="w-8 h-8 rounded-full object-cover border border-white z-10 shadow-sm"
                       alt=""
                     />
                     <img 
-                      src={`https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80`} 
+                      src={getAvatarUrl("female_4")} 
                       className="w-8 h-8 rounded-full object-cover border border-white shadow-sm"
                       alt=""
                     />

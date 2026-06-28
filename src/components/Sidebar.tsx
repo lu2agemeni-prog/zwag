@@ -1,3 +1,4 @@
+import { getAvatarUrl } from "../lib/avatarUtils";
 import React from "react";
 import { useApp } from "../lib/store";
 import { motion, AnimatePresence } from "motion/react";
@@ -88,7 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex items-center gap-3 mt-4">
                 <div className="relative">
                   <img 
-                    src={currentUser.profileImage || `https://images.unsplash.com/photo-${currentUser.avatar === "male_1" ? "1534528741775-53994a69daeb" : currentUser.avatar === "female_1" ? "1494790108377-be9c29b29330" : "1507003211169-0a1dd7228f2d"}?auto=format&fit=crop&w=150&q=80`} 
+                    src={getAvatarUrl(currentUser.avatar, currentUser.profileImage)} 
                     alt={currentUser.name} 
                     className="w-14 h-14 rounded-full object-cover border-2 border-emerald-400"
                     referrerPolicy="no-referrer"
