@@ -6,5 +6,3 @@ const SUPABASE_ANON_KEY = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "ey
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Helper script to create tables in the Supabase SQL Editor
-export const SUPABASE_SQL_SETUP = `-- ====================================================================
