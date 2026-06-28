@@ -16,9 +16,11 @@ interface AppContextType {
   premiumRequests: PremiumSubscriptionRequest[];
   dbError: string | null;
   isSupabaseLoading: boolean;
+  authError: string | null;
   
-  loginUser: (email: string, mobile: string) => Promise<boolean>;
-  verifyMobileCode: (code: string) => boolean;
+  // Auth — OTP حقيقي عبر Supabase
+  sendOtp: (email: string, mobile: string) => Promise<{ success: boolean; error?: string }>;
+  verifyOtp: (email: string, token: string) => Promise<{ success: boolean; error?: string }>;
   submitCharterAgreement: () => void;
   saveProfile: (profile: Partial<UserProfile>) => void;
   updateProfile: (profile: Partial<UserProfile>) => void;
@@ -52,7 +54,6 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// بيانات أولية لقصص النجاح فقط — لا profiles وهمية
 const SEED_STORIES: SuccessStory[] = [
   {
     id: "STORY-1",
@@ -68,7 +69,7 @@ const SEED_STORIES: SuccessStory[] = [
     id: "STORY-2",
     husbandName: "خالد محمود",
     wifeName: "زينب عبد الكريم",
-    story: "بعد رحلة من البحث، وجدت شريكة عمري زينب هنا. كان هناك وضوح تام وصراحة كاملة في تفاصيل الملف الشخصي مما جعل الرؤية الشرعية مريحة ومبنية على تفاهم مسبق. نشكر القائمين على هذا العمل الطيب لما يقدمونه من حماية للخصوصية وتركيز على الجدية.",
+    story: "بعد رحلة من البحث، وجدت شريكة عمري زينب هنا. كان هناك وضوح تام وصراحة كاملة في تفاصيل الملف الشخصي مما جعل الرؤية الشرعية مريحة ومبنية على تفاهم مسبق.",
     date: "2026-05-30",
     isApproved: true,
     avatarHusband: "male_5",
@@ -76,12 +77,10 @@ const SEED_STORIES: SuccessStory[] = [
   }
 ];
 
-// توليد ID فريد للعضو
 function generateMemberId(): string {
-  return `MEMBER-${Math.floor(1000 + Math.random() * 9000)}`;
+  return `MEMBER-${Date.now().toString().slice(-5)}${Math.floor(10 + Math.random() * 90)}`;
 }
 
-// توليد ID فريد عام
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 9999)}`;
 }
@@ -101,14 +100,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [premiumRequests, setPremiumRequests] = useState<PremiumSubscriptionRequest[]>([]);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [isSupabaseLoading, setIsSupabaseLoading] = useState<boolean>(true);
 
-  // ==================== تحميل البيانات من Supabase ====================
+  // ==================== تحميل البيانات ====================
   const loadInitialData = useCallback(async () => {
     setIsSupabaseLoading(true);
     setDbError(null);
     try {
-      // 1. تحميل الملفات الشخصية
       const { data: dbProfiles, error: profilesError } = await supabase
         .from("profiles")
         .select("*")
@@ -122,79 +121,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setProfiles((dbProfiles as UserProfile[]) || []);
 
-      // 2. قصص النجاح
-      const { data: dbStories } = await supabase
-        .from("success_stories")
-        .select("*")
-        .order("date", { ascending: false });
-      
+      const { data: dbStories } = await supabase.from("success_stories").select("*").order("date", { ascending: false });
       if (dbStories && dbStories.length > 0) {
         setSuccessStories(dbStories as SuccessStory[]);
       } else {
-        // إدراج قصص البداية مرة واحدة فقط لو الجدول فاضي
-        const { error: storyErr } = await supabase.from("success_stories").insert(SEED_STORIES);
-        if (!storyErr) setSuccessStories(SEED_STORIES);
+        await supabase.from("success_stories").insert(SEED_STORIES);
+        setSuccessStories(SEED_STORIES);
       }
 
-      // 3. الرسائل — نجيب بس رسائل المستخدم الحالي لو موجود
       if (currentUser) {
         const { data: dbMessages } = await supabase
-          .from("messages")
-          .select("*")
+          .from("messages").select("*")
           .or(`senderId.eq.${currentUser.id},receiverId.eq.${currentUser.id}`)
           .order("timestamp", { ascending: true });
         if (dbMessages) setMessages(dbMessages as Message[]);
 
-        // 4. الإشعارات الخاصة بالمستخدم
         const { data: dbNotifications } = await supabase
-          .from("notifications")
-          .select("*")
+          .from("notifications").select("*")
           .or(`userId.eq.${currentUser.id},userId.eq.ADMIN`)
           .order("timestamp", { ascending: false });
         if (dbNotifications) setNotifications(dbNotifications as Notification[]);
 
-        // 5. التفاعلات
         const { data: dbInteractions } = await supabase
-          .from("interactions")
-          .select("*")
+          .from("interactions").select("*")
           .or(`fromUserId.eq.${currentUser.id},toUserId.eq.${currentUser.id}`)
           .order("timestamp", { ascending: false });
         if (dbInteractions) setInteractions(dbInteractions as Interaction[]);
       } else {
-        // لو مفيش مستخدم، نحمل الكل للـ admin والعرض العام
-        const { data: dbNotifications } = await supabase
-          .from("notifications").select("*").order("timestamp", { ascending: false });
-        if (dbNotifications) setNotifications(dbNotifications as Notification[]);
-        
-        const { data: dbInteractions } = await supabase
-          .from("interactions").select("*").order("timestamp", { ascending: false });
-        if (dbInteractions) setInteractions(dbInteractions as Interaction[]);
+        const { data: dbN } = await supabase.from("notifications").select("*").order("timestamp", { ascending: false });
+        if (dbN) setNotifications(dbN as Notification[]);
+        const { data: dbI } = await supabase.from("interactions").select("*").order("timestamp", { ascending: false });
+        if (dbI) setInteractions(dbI as Interaction[]);
       }
 
-      // 6. طلبات الـ premium
-      const { data: dbRequests } = await supabase
-        .from("premium_requests")
-        .select("*")
-        .order("timestamp", { ascending: false });
+      const { data: dbRequests } = await supabase.from("premium_requests").select("*").order("timestamp", { ascending: false });
       if (dbRequests) setPremiumRequests(dbRequests as PremiumSubscriptionRequest[]);
 
     } catch (err: any) {
-      console.error("Supabase error:", err);
       if (err.message === "tables_not_created") {
-        setDbError("لم يتم إنشاء الجداول في Supabase بعد. افتح لوحة الإدارة وانسخ سكريبت SQL وشغّله في Supabase SQL Editor.");
+        setDbError("لم يتم إنشاء الجداول في Supabase بعد. افتح لوحة الإدارة وشغّل سكريبت SQL.");
       } else {
-        setDbError(`خطأ في الاتصال بقاعدة البيانات: ${err.message || "تحقق من إعدادات Supabase."}`);
+        setDbError(`خطأ في الاتصال بقاعدة البيانات: ${err.message}`);
       }
     } finally {
       setIsSupabaseLoading(false);
     }
   }, [currentUser?.id]);
 
-  useEffect(() => {
-    loadInitialData();
-  }, []);
+  useEffect(() => { loadInitialData(); }, []);
 
-  // حفظ المستخدم الحالي في localStorage
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem("zwag_current_user", JSON.stringify(currentUser));
@@ -203,107 +178,157 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentUser]);
 
-  // ==================== تحديث المستخدم الحالي لو تغيّر في الـ profiles ====================
-  useEffect(() => {
-    if (currentUser && profiles.length > 0) {
-      const updatedInDb = profiles.find(p => p.id === currentUser.id);
-      if (updatedInDb && JSON.stringify(updatedInDb) !== JSON.stringify(currentUser)) {
-        setCurrentUser(updatedInDb);
-      }
-    }
-  }, [profiles]);
+  // ==================== AUTH — OTP حقيقي عبر Supabase ====================
 
-  // ==================== Auth ====================
-  const loginUser = async (email: string, mobile: string): Promise<boolean> => {
+  /**
+   * sendOtp: يرسل OTP حقيقي عبر Supabase Auth (Email Magic Link / OTP)
+   * - لو البريد موجود في profiles → يرسل OTP لتسجيل الدخول
+   * - لو جديد → يسجل أولاً ثم يرسل OTP
+   */
+  const sendOtp = async (email: string, mobile: string): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = email.toLowerCase().trim();
+    setAuthError(null);
+
     try {
-      const { data: dbUser, error } = await supabase
+      // إرسال OTP عبر Supabase Auth Email OTP
+      const { error } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          shouldCreateUser: true, // ينشئ المستخدم تلقائياً لو مش موجود
+          data: { mobile } // يحفظ الموبايل في user_metadata
+        }
+      });
+
+      if (error) {
+        // رسائل خطأ واضحة للمستخدم
+        if (error.message.includes("rate limit") || error.message.includes("too many")) {
+          return { success: false, error: "تم إرسال عدة رموز مؤخراً. انتظر دقيقة ثم حاول مجدداً." };
+        }
+        if (error.message.includes("invalid")) {
+          return { success: false, error: "البريد الإلكتروني غير صالح." };
+        }
+        return { success: false, error: `فشل إرسال الرمز: ${error.message}` };
+      }
+
+      // حفظ الإيميل والموبايل مؤقتاً للـ verify step
+      sessionStorage.setItem("zwag_pending_email", cleanEmail);
+      sessionStorage.setItem("zwag_pending_mobile", mobile);
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: "خطأ في الاتصال. تحقق من الإنترنت وحاول مجدداً." };
+    }
+  };
+
+  /**
+   * verifyOtp: يتحقق من الرمز المُرسل عبر Supabase Auth
+   * يقبل فقط الرمز الصحيح من البريد — لا bypass لأي رمز
+   */
+  const verifyOtp = async (email: string, token: string): Promise<{ success: boolean; error?: string }> => {
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanToken = token.trim();
+    setAuthError(null);
+
+    if (!cleanToken || cleanToken.length < 6) {
+      return { success: false, error: "أدخل رمز التحقق المكون من 6 أرقام المُرسل لبريدك." };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanToken,
+        type: "email"
+      });
+
+      if (error) {
+        if (error.message.includes("expired")) {
+          return { success: false, error: "انتهت صلاحية الرمز. اطلب رمزاً جديداً." };
+        }
+        if (error.message.includes("invalid") || error.message.includes("Token")) {
+          return { success: false, error: "الرمز غير صحيح. تأكد من الرمز المُرسل لبريدك الإلكتروني." };
+        }
+        return { success: false, error: `الرمز غير صحيح أو منتهي الصلاحية.` };
+      }
+
+      if (!data.user) {
+        return { success: false, error: "فشل التحقق. حاول مجدداً." };
+      }
+
+      const authUser = data.user;
+      const mobile = sessionStorage.getItem("zwag_pending_mobile") || "";
+      sessionStorage.removeItem("zwag_pending_email");
+      sessionStorage.removeItem("zwag_pending_mobile");
+
+      // نبحث عن الملف الشخصي في DB
+      const { data: existingProfile } = await supabase
         .from("profiles")
         .select("*")
         .eq("email", cleanEmail)
         .single();
 
-      if (!error && dbUser) {
-        const loggedUser = dbUser as UserProfile;
-        const updated = { ...loggedUser, isOnline: true };
+      if (existingProfile) {
+        const profile = existingProfile as UserProfile;
+        const updated = { ...profile, isOnline: true, isMobileVerified: true };
         setCurrentUser(updated);
         setProfiles(prev => {
-          const exists = prev.find(p => p.id === loggedUser.id);
-          if (exists) return prev.map(p => p.id === loggedUser.id ? updated : p);
-          return [updated, ...prev];
+          const exists = prev.find(p => p.id === profile.id);
+          return exists ? prev.map(p => p.id === profile.id ? updated : p) : [updated, ...prev];
         });
-        await supabase.from("profiles").update({ isOnline: true }).eq("id", loggedUser.id);
-        return true;
+        await supabase.from("profiles").update({ isOnline: true, isMobileVerified: true }).eq("id", profile.id);
+      } else {
+        // مستخدم جديد — ننشئ الملف الأولي
+        const newProfile: UserProfile = {
+          id: generateMemberId(),
+          name: "",
+          email: cleanEmail,
+          mobile,
+          isMobileVerified: true, // تم التحقق عبر Supabase Auth
+          agreedToCharter: false,
+          gender: Gender.MALE,
+          avatar: "male_1",
+          profileImage: null,
+          age: 25,
+          nationality: "مصر",
+          residence: "مصر",
+          profession: "",
+          education: "بكالوريوس / ليسانس",
+          income: "من 7,000 إلى 15,000 جنيه أو ما يعادلها",
+          maritalStatus: MaritalStatus.SINGLE,
+          hasChildren: false,
+          childrenCount: 0,
+          isSmoker: false,
+          height: 170,
+          weight: 70,
+          skinColor: "قمحي",
+          bodyBuild: "متوسط",
+          healthStatus: "بصحة جيدة جداً والحمد لله",
+          hasDisability: false,
+          chronicDiseases: "لا يوجد",
+          religiousCommitment: "ملتزم متوسط يسعى للأفضل",
+          prayers: "أصلي كل الصلوات في وقتها والحمد لله",
+          hasBeard: null,
+          hijabType: null,
+          qaImaStance: "موضوع خاضع للاتفاق بين العائلتين",
+          mahrOpinion: "موضوع خاضع للاتفاق والنقاش المرن",
+          marriageTimeframe: "خلال سنة على الأكثر",
+          shariaVisionStance: "أؤيد الرؤية الشرعية بوجود محرم في أقرب فرصة",
+          aboutMe: "",
+          partnerSpecs: "",
+          hobbies: [],
+          isPremium: false,
+          isVerified: false,
+          joinDate: new Date().toISOString().split('T')[0],
+          isOnline: true,
+          viewsCount: 0
+        };
+        setCurrentUser(newProfile);
+        // لا ندرج في profiles لحد ما يكمل إعداد الملف
       }
 
-      // مستخدم جديد — إنشاء حساب مؤقت
-      const newId = generateMemberId();
-      const newProfile: UserProfile = {
-        id: newId,
-        name: "",
-        email: cleanEmail,
-        mobile,
-        isMobileVerified: false,
-        agreedToCharter: false,
-        gender: Gender.MALE,
-        avatar: "male_1",
-        profileImage: null,
-        age: 25,
-        nationality: "مصر",
-        residence: "مصر",
-        profession: "",
-        education: "بكالوريوس / ليسانس",
-        income: "من 7,000 إلى 15,000 جنيه أو ما يعادلها",
-        maritalStatus: MaritalStatus.SINGLE,
-        hasChildren: false,
-        childrenCount: 0,
-        isSmoker: false,
-        height: 170,
-        weight: 70,
-        skinColor: "قمحي",
-        bodyBuild: "متوسط",
-        healthStatus: "بصحة جيدة جداً والحمد لله",
-        hasDisability: false,
-        chronicDiseases: "لا يوجد",
-        religiousCommitment: "ملتزم متوسط يسعى للأفضل",
-        prayers: "أصلي كل الصلوات في وقتها والحمد لله",
-        hasBeard: null,
-        hijabType: null,
-        qaImaStance: "موضوع خاضع للاتفاق بين العائلتين",
-        mahrOpinion: "موضوع خاضع للاتفاق والنقاش المرن",
-        marriageTimeframe: "خلال سنة على الأكثر",
-        shariaVisionStance: "أؤيد الرؤية الشرعية بوجود محرم في أقرب فرصة",
-        aboutMe: "",
-        partnerSpecs: "",
-        hobbies: [],
-        isPremium: false,
-        isVerified: false,
-        joinDate: new Date().toISOString().split('T')[0],
-        isOnline: true,
-        viewsCount: 0
-      };
-      setCurrentUser(newProfile);
-      // لا ندرج في Supabase لحد ما يكمل تسجيل الملف
-      return true;
-    } catch (err) {
-      console.error("Login error:", err);
-      return false;
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: "خطأ في الاتصال. تحقق من الإنترنت وحاول مجدداً." };
     }
-  };
-
-  const verifyMobileCode = (code: string): boolean => {
-    // في الإنتاج: تحقق حقيقي من SMS. حالياً: 4+ أرقام
-    if (code.length >= 4) {
-      if (currentUser) {
-        const updated = { ...currentUser, isMobileVerified: true };
-        setCurrentUser(updated);
-        if (currentUser.name) {
-          supabase.from("profiles").update({ isMobileVerified: true }).eq("id", currentUser.id).then();
-        }
-        return true;
-      }
-    }
-    return false;
   };
 
   const submitCharterAgreement = () => {
@@ -322,11 +347,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(updated);
     setProfiles(prev => {
       const exists = prev.find(p => p.id === updated.id);
-      if (exists) return prev.map(p => p.id === updated.id ? updated : p);
-      return [updated, ...prev];
+      return exists ? prev.map(p => p.id === updated.id ? updated : p) : [updated, ...prev];
     });
-
-    // حفظ في Supabase — upsert للحالتين (جديد أو تعديل)
     const { error } = await supabase.from("profiles").upsert(updated);
     if (error) console.error("Save profile error:", error);
   };
@@ -334,15 +356,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateProfile = (updatedData: Partial<UserProfile>) => saveProfile(updatedData);
 
   const updateAvatar = (avatarId: string) => {
-    if (currentUser) {
-      saveProfile({ avatar: avatarId });
-    }
+    if (currentUser) saveProfile({ avatar: avatarId });
   };
 
   const uploadCustomImage = (base64Data: string) => {
-    if (currentUser && currentUser.isPremium) {
-      saveProfile({ profileImage: base64Data });
-    }
+    if (currentUser && currentUser.isPremium) saveProfile({ profileImage: base64Data });
   };
 
   const logout = async () => {
@@ -351,6 +369,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .update({ isOnline: false, lastSeen: new Date().toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" }) })
         .eq("id", currentUser.id);
     }
+    await supabase.auth.signOut();
     setCurrentUser(null);
     setMessages([]);
     setNotifications([]);
@@ -363,43 +382,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!currentUser) return;
     const exists = interactions.some(i => i.fromUserId === currentUser.id && i.toUserId === toUserId && i.type === "interest");
     if (exists) return;
-
-    const newInteraction: Interaction = {
-      id: generateId("INT"),
-      fromUserId: currentUser.id,
-      toUserId,
-      type: "interest",
-      timestamp: new Date().toISOString()
-    };
-
-    const targetProfile = profiles.find(p => p.id === toUserId);
+    const newInteraction: Interaction = { id: generateId("INT"), fromUserId: currentUser.id, toUserId, type: "interest", timestamp: new Date().toISOString() };
     const newNotification: Notification = {
-      id: generateId("NOT"),
-      userId: toUserId,
-      type: "interest",
-      senderId: currentUser.id,
-      senderName: currentUser.name || "عضو جاد",
-      content: `أبدى العضو "${currentUser.name || currentUser.id}" اهتمامه بملفك الشخصي. يمكنك الاطلاع على ملفه والرد.`,
-      timestamp: new Date().toISOString(),
-      isRead: false
+      id: generateId("NOT"), userId: toUserId, type: "interest",
+      senderId: currentUser.id, senderName: currentUser.name || "عضو جاد",
+      content: `أبدى العضو "${currentUser.name || currentUser.id}" اهتمامه بملفك.`,
+      timestamp: new Date().toISOString(), isRead: false
     };
-
     setInteractions(prev => [...prev, newInteraction]);
     setNotifications(prev => [newNotification, ...prev]);
-
     await supabase.from("interactions").insert(newInteraction);
     await supabase.from("notifications").insert(newNotification);
   };
 
   const ignoreProfile = async (toUserId: string) => {
     if (!currentUser) return;
-    const newInteraction: Interaction = {
-      id: generateId("INT"),
-      fromUserId: currentUser.id,
-      toUserId,
-      type: "ignore",
-      timestamp: new Date().toISOString()
-    };
+    const newInteraction: Interaction = { id: generateId("INT"), fromUserId: currentUser.id, toUserId, type: "ignore", timestamp: new Date().toISOString() };
     setInteractions(prev => [...prev, newInteraction]);
     await supabase.from("interactions").insert(newInteraction);
   };
@@ -407,45 +405,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const unignoreProfile = async (toUserId: string) => {
     if (!currentUser) return;
     setInteractions(prev => prev.filter(i => !(i.fromUserId === currentUser.id && i.toUserId === toUserId && i.type === "ignore")));
-    await supabase.from("interactions")
-      .delete()
-      .eq("fromUserId", currentUser.id)
-      .eq("toUserId", toUserId)
-      .eq("type", "ignore");
+    await supabase.from("interactions").delete().eq("fromUserId", currentUser.id).eq("toUserId", toUserId).eq("type", "ignore");
   };
 
   const blockProfile = async (toUserId: string) => {
     if (!currentUser) return;
-    const newInteraction: Interaction = {
-      id: generateId("INT"),
-      fromUserId: currentUser.id,
-      toUserId,
-      type: "block",
-      timestamp: new Date().toISOString()
-    };
+    const newInteraction: Interaction = { id: generateId("INT"), fromUserId: currentUser.id, toUserId, type: "block", timestamp: new Date().toISOString() };
     setInteractions(prev => [...prev, newInteraction]);
     await supabase.from("interactions").insert(newInteraction);
   };
 
   const reportProfile = async (toUserId: string, reason: string) => {
     if (!currentUser) return;
-    const newInteraction: Interaction = {
-      id: generateId("INT"),
-      fromUserId: currentUser.id,
-      toUserId,
-      type: "report",
-      reason,
-      timestamp: new Date().toISOString()
-    };
+    const newInteraction: Interaction = { id: generateId("INT"), fromUserId: currentUser.id, toUserId, type: "report", reason, timestamp: new Date().toISOString() };
     const systemNotif: Notification = {
-      id: generateId("NOT"),
-      userId: "ADMIN",
-      type: "system",
-      senderId: currentUser.id,
-      senderName: currentUser.name || "مبلّغ",
-      content: `بلاغ من العضو "${currentUser.name}" ضد العضو "${toUserId}": ${reason}`,
-      timestamp: new Date().toISOString(),
-      isRead: false
+      id: generateId("NOT"), userId: "ADMIN", type: "system",
+      senderId: currentUser.id, senderName: currentUser.name || "مبلّغ",
+      content: `بلاغ من "${currentUser.name}" ضد "${toUserId}": ${reason}`,
+      timestamp: new Date().toISOString(), isRead: false
     };
     setInteractions(prev => [...prev, newInteraction]);
     setNotifications(prev => [systemNotif, ...prev]);
@@ -453,7 +430,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await supabase.from("notifications").insert(systemNotif);
   };
 
-  // تحديث عداد المشاهدات
   const incrementViewCount = async (profileId: string) => {
     if (!currentUser || profileId === currentUser.id) return;
     const profile = profiles.find(p => p.id === profileId);
@@ -466,23 +442,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==================== الرسائل ====================
   const sendMessage = async (toUserId: string, content: string) => {
     if (!currentUser) return;
-    const newMessage: Message = {
-      id: generateId("MSG"),
-      senderId: currentUser.id,
-      receiverId: toUserId,
-      content,
-      timestamp: new Date().toISOString(),
-      isRead: false
-    };
+    const newMessage: Message = { id: generateId("MSG"), senderId: currentUser.id, receiverId: toUserId, content, timestamp: new Date().toISOString(), isRead: false };
     const newNotification: Notification = {
-      id: generateId("NOT"),
-      userId: toUserId,
-      type: "message",
-      senderId: currentUser.id,
-      senderName: currentUser.name || "مرسل",
-      content: `رسالة جديدة من "${currentUser.name || currentUser.id}": "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`,
-      timestamp: new Date().toISOString(),
-      isRead: false
+      id: generateId("NOT"), userId: toUserId, type: "message",
+      senderId: currentUser.id, senderName: currentUser.name || "مرسل",
+      content: `رسالة جديدة من "${currentUser.name}": "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`,
+      timestamp: new Date().toISOString(), isRead: false
     };
     setMessages(prev => [...prev, newMessage]);
     setNotifications(prev => [newNotification, ...prev]);
@@ -492,12 +457,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const markMessagesAsRead = async (senderId: string) => {
     if (!currentUser) return;
-    setMessages(prev => prev.map(m =>
-      m.senderId === senderId && m.receiverId === currentUser.id
-        ? { ...m, isRead: true } : m
-    ));
-    await supabase.from("messages").update({ isRead: true })
-      .eq("senderId", senderId).eq("receiverId", currentUser.id);
+    setMessages(prev => prev.map(m => m.senderId === senderId && m.receiverId === currentUser.id ? { ...m, isRead: true } : m));
+    await supabase.from("messages").update({ isRead: true }).eq("senderId", senderId).eq("receiverId", currentUser.id);
   };
 
   // ==================== الإشعارات ====================
@@ -508,39 +469,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const markAllNotificationsAsRead = async () => {
     if (!currentUser) return;
-    setNotifications(prev => prev.map(n =>
-      n.userId === currentUser.id ? { ...n, isRead: true } : n
-    ));
+    setNotifications(prev => prev.map(n => n.userId === currentUser.id ? { ...n, isRead: true } : n));
     await supabase.from("notifications").update({ isRead: true }).eq("userId", currentUser.id);
   };
 
   // ==================== Premium ====================
-  const submitPremiumRequest = async (
-    plan: "week" | "month" | "3months" | "6months" | "year",
-    paymentMethod: "google_play" | "credit_card" | "mobile_wallet",
-    phoneNumber?: string
-  ) => {
+  const submitPremiumRequest = async (plan: "week" | "month" | "3months" | "6months" | "year", paymentMethod: "google_play" | "credit_card" | "mobile_wallet", phoneNumber?: string) => {
     if (!currentUser) return;
     const newRequest: PremiumSubscriptionRequest = {
-      id: generateId("REQ"),
-      userId: currentUser.id,
-      userName: currentUser.name || "عضو جديد",
-      userGender: currentUser.gender,
-      planDuration: plan,
-      paymentMethod,
-      phoneNumber,
-      status: "pending",
-      timestamp: new Date().toISOString()
+      id: generateId("REQ"), userId: currentUser.id, userName: currentUser.name || "عضو جديد",
+      userGender: currentUser.gender, planDuration: plan, paymentMethod, phoneNumber,
+      status: "pending", timestamp: new Date().toISOString()
     };
     const systemNotif: Notification = {
-      id: generateId("NOT"),
-      userId: "ADMIN",
-      type: "premium_request",
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      content: `طلب اشتراك مميز من "${currentUser.name}" — الباقة: ${plan} — طريقة الدفع: ${paymentMethod}`,
-      timestamp: new Date().toISOString(),
-      isRead: false
+      id: generateId("NOT"), userId: "ADMIN", type: "premium_request",
+      senderId: currentUser.id, senderName: currentUser.name,
+      content: `طلب اشتراك مميز من "${currentUser.name}" — الباقة: ${plan} — الدفع: ${paymentMethod}`,
+      timestamp: new Date().toISOString(), isRead: false
     };
     setPremiumRequests(prev => [newRequest, ...prev]);
     setNotifications(prev => [systemNotif, ...prev]);
@@ -552,30 +497,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const adminApprovePremium = async (requestId: string) => {
     const request = premiumRequests.find(r => r.id === requestId);
     if (!request) return;
-
-    // حساب تاريخ انتهاء الاشتراك
     const daysMap: Record<string, number> = { week: 7, month: 30, "3months": 90, "6months": 180, year: 365 };
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + (daysMap[request.planDuration] || 30));
-
+    const expiryStr = expiryDate.toISOString().split('T')[0];
     setPremiumRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: "approved" } : r));
-    setProfiles(prev => prev.map(p => p.id === request.userId ? { ...p, isPremium: true, premiumExpiryDate: expiryDate.toISOString().split('T')[0] } : p));
-    if (currentUser?.id === request.userId) {
-      setCurrentUser(prev => prev ? { ...prev, isPremium: true, premiumExpiryDate: expiryDate.toISOString().split('T')[0] } : null);
-    }
-
-    const notif: Notification = {
-      id: generateId("NOT"),
-      userId: request.userId,
-      type: "system",
-      content: `تهانينا! تمت الموافقة على اشتراكك المميز حتى تاريخ ${expiryDate.toLocaleDateString("ar-EG")}. يمكنك الآن إرسال رسائل غير محدودة ورفع صورتك الشخصية.`,
-      timestamp: new Date().toISOString(),
-      isRead: false
-    };
+    setProfiles(prev => prev.map(p => p.id === request.userId ? { ...p, isPremium: true, premiumExpiryDate: expiryStr } : p));
+    if (currentUser?.id === request.userId) setCurrentUser(prev => prev ? { ...prev, isPremium: true, premiumExpiryDate: expiryStr } : null);
+    const notif: Notification = { id: generateId("NOT"), userId: request.userId, type: "system", content: `تهانينا! تمت الموافقة على اشتراكك المميز حتى ${expiryDate.toLocaleDateString("ar-EG")}.`, timestamp: new Date().toISOString(), isRead: false };
     setNotifications(prev => [notif, ...prev]);
-
     await supabase.from("premium_requests").update({ status: "approved" }).eq("id", requestId);
-    await supabase.from("profiles").update({ isPremium: true, premiumExpiryDate: expiryDate.toISOString().split('T')[0] }).eq("id", request.userId);
+    await supabase.from("profiles").update({ isPremium: true, premiumExpiryDate: expiryStr }).eq("id", request.userId);
     await supabase.from("notifications").insert(notif);
   };
 
@@ -583,14 +515,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const request = premiumRequests.find(r => r.id === requestId);
     if (!request) return;
     setPremiumRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: "rejected" } : r));
-    const notif: Notification = {
-      id: generateId("NOT"),
-      userId: request.userId,
-      type: "system",
-      content: "تم رفض طلب الاشتراك المميز. يرجى التأكد من عملية الدفع وإعادة التقديم، أو التواصل مع الدعم الفني.",
-      timestamp: new Date().toISOString(),
-      isRead: false
-    };
+    const notif: Notification = { id: generateId("NOT"), userId: request.userId, type: "system", content: "تم رفض طلب الاشتراك المميز. يرجى التأكد من عملية الدفع وإعادة التقديم.", timestamp: new Date().toISOString(), isRead: false };
     setNotifications(prev => [notif, ...prev]);
     await supabase.from("premium_requests").update({ status: "rejected" }).eq("id", requestId);
     await supabase.from("notifications").insert(notif);
@@ -598,17 +523,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const adminVerifyUser = async (userId: string) => {
     setProfiles(prev => prev.map(p => p.id === userId ? { ...p, isVerified: true } : p));
-    if (currentUser?.id === userId) {
-      setCurrentUser(prev => prev ? { ...prev, isVerified: true } : null);
-    }
-    const notif: Notification = {
-      id: generateId("NOT"),
-      userId,
-      type: "system",
-      content: "تم التحقق من ملفك الشخصي بواسطة الإدارة. يحمل ملفك الآن شارة الحساب الموثق لمزيد من المصداقية.",
-      timestamp: new Date().toISOString(),
-      isRead: false
-    };
+    if (currentUser?.id === userId) setCurrentUser(prev => prev ? { ...prev, isVerified: true } : null);
+    const notif: Notification = { id: generateId("NOT"), userId, type: "system", content: "تم التحقق من ملفك الشخصي بواسطة الإدارة. ملفك يحمل الآن شارة الحساب الموثق.", timestamp: new Date().toISOString(), isRead: false };
     setNotifications(prev => [notif, ...prev]);
     await supabase.from("profiles").update({ isVerified: true }).eq("id", userId);
     await supabase.from("notifications").insert(notif);
@@ -626,56 +542,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const adminAddStory = async (husband: string, wife: string, storyContent: string) => {
-    const newStory: SuccessStory = {
-      id: generateId("STORY"),
-      husbandName: husband,
-      wifeName: wife,
-      story: storyContent,
-      date: new Date().toISOString().split('T')[0],
-      isApproved: false,
-      avatarHusband: "male_4",
-      avatarWife: "female_4"
-    };
+    const newStory: SuccessStory = { id: generateId("STORY"), husbandName: husband, wifeName: wife, story: storyContent, date: new Date().toISOString().split('T')[0], isApproved: false, avatarHusband: "male_4", avatarWife: "female_4" };
     setSuccessStories(prev => [newStory, ...prev]);
     await supabase.from("success_stories").insert(newStory);
   };
 
   return (
     <AppContext.Provider value={{
-      currentUser,
-      profiles,
-      messages,
-      notifications,
-      successStories,
-      interactions,
-      premiumRequests,
-      dbError,
-      isSupabaseLoading,
-      loginUser,
-      verifyMobileCode,
-      submitCharterAgreement,
-      saveProfile,
-      updateProfile,
-      updateAvatar,
-      uploadCustomImage,
-      logout,
-      expressInterest,
-      ignoreProfile,
-      unignoreProfile,
-      blockProfile,
-      reportProfile,
-      incrementViewCount,
-      sendMessage,
-      markMessagesAsRead,
-      markNotificationAsRead,
-      markAllNotificationsAsRead,
+      currentUser, profiles, messages, notifications, successStories,
+      interactions, premiumRequests, dbError, authError, isSupabaseLoading,
+      sendOtp, verifyOtp,
+      submitCharterAgreement, saveProfile, updateProfile, updateAvatar, uploadCustomImage, logout,
+      expressInterest, ignoreProfile, unignoreProfile, blockProfile, reportProfile, incrementViewCount,
+      sendMessage, markMessagesAsRead,
+      markNotificationAsRead, markAllNotificationsAsRead,
       submitPremiumRequest,
-      adminApprovePremium,
-      adminRejectPremium,
-      adminVerifyUser,
-      adminDeleteUser,
-      adminApproveStory,
-      adminAddStory,
+      adminApprovePremium, adminRejectPremium, adminVerifyUser, adminDeleteUser, adminApproveStory, adminAddStory,
       retryLoadData: loadInitialData
     }}>
       {children}
